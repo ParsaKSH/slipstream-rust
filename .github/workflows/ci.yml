@@ -128,7 +128,7 @@ jobs:
             artifact_name: slipstream-linux-arm64
             ext: ""
           - name: darwin-amd64
-            runner: macos-13
+            runner: macos-14
             target: x86_64-apple-darwin
             artifact_name: slipstream-darwin-amd64
             ext: ""
@@ -172,6 +172,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
+          choco install pkgconfiglite -y
           vcpkg install openssl:${{ matrix.vcpkg_triplet }}
           $root = "$env:VCPKG_INSTALLATION_ROOT\installed\${{ matrix.vcpkg_triplet }}"
           echo "OPENSSL_DIR=$root" >> $env:GITHUB_ENV
@@ -179,6 +180,7 @@ jobs:
           echo "OPENSSL_INCLUDE_DIR=$root\include" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$root\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_USE_STATIC_LIBS=TRUE" >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$root\lib\pkgconfig" >> $env:GITHUB_ENV
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

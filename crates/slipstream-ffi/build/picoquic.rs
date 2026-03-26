@@ -24,9 +24,19 @@ pub(crate) fn build_picoquic(
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join(".picoquic-build"));
 
-    // On Windows or when bash is unavailable, use cmake directly.
-    // On Unix, prefer the shell script for backward compatibility.
-    let use_script = !cfg!(target_os = "windows") && {
+    // Use native cmake when:
+    // - On Windows (no bash available)
+    // - On macOS cross-compiling (need CMAKE_OSX_ARCHITECTURES the bash script doesn't pass)
+    // Otherwise prefer the shell script for backward compatibility.
+    let is_macos_cross = cfg!(target_os = "macos") && {
+        let host_arch = if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        !target.contains(host_arch)
+    };
+    let use_script = !cfg!(target_os = "windows") && !is_macos_cross && {
         let script = root.join("scripts").join("build_picoquic.sh");
         script.exists()
     };
@@ -68,13 +78,29 @@ pub(crate) fn build_picoquic(
             );
         }
     } else {
-        // Native cmake invocation (works on Windows and anywhere without bash).
+        // Native cmake invocation (works on Windows, macOS cross-compile, and anywhere without bash).
         let mut cmake_args: Vec<String> = vec![
             "-DCMAKE_BUILD_TYPE=Release".to_string(),
             "-DPICOQUIC_FETCH_PTLS=ON".to_string(),
             "-DCMAKE_POSITION_INDEPENDENT_CODE=ON".to_string(),
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5".to_string(),
         ];
+
+        // Windows ARM64 cross-compilation (MSVC Visual Studio generator uses -A flag).
+        if target.contains("aarch64") && target.contains("windows") {
+            cmake_args.push("-A".to_string());
+            cmake_args.push("ARM64".to_string());
+        }
+
+        // macOS cross-compilation architecture flag.
+        if target.contains("apple") {
+            if target.contains("x86_64") {
+                cmake_args.push("-DCMAKE_OSX_ARCHITECTURES=x86_64".to_string());
+            } else if target.contains("aarch64") {
+                cmake_args.push("-DCMAKE_OSX_ARCHITECTURES=arm64".to_string());
+            }
+        }
+
         if let Some(root) = &openssl_paths.root {
             cmake_args.push(format!("-DOPENSSL_ROOT_DIR={}", root.display()));
         }
