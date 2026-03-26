@@ -126,22 +126,21 @@ pub(crate) fn build_picoquic(
         }
 
         // Workaround: picotls on Windows includes "wincompat.h" from picotls.h,
-        // but the win/ directory isn't added to include paths by its cmake.
-        // Copy wincompat.h to the include/ directory so the compiler can find it.
+        // but it's actually provided by picoquic (at picoquic/wincompat.h).
+        // When picotls is built as a FetchContent dependency, picoquic's include
+        // path isn't available. Copy it to the picotls include directory.
         if target.contains("windows") {
-            let wincompat_src = build_dir
-                .join("_deps")
-                .join("picotls-src")
-                .join("win")
-                .join("wincompat.h");
-            let wincompat_dst = build_dir
-                .join("_deps")
-                .join("picotls-src")
-                .join("include")
-                .join("wincompat.h");
-            if wincompat_src.exists() && !wincompat_dst.exists() {
-                std::fs::copy(&wincompat_src, &wincompat_dst)
-                    .map_err(|e| format!("Failed to copy wincompat.h: {}", e))?;
+            let wincompat_src = picoquic_dir.join("picoquic").join("wincompat.h");
+            if wincompat_src.exists() {
+                let picotls_include = build_dir
+                    .join("_deps")
+                    .join("picotls-src")
+                    .join("include");
+                let wincompat_dst = picotls_include.join("wincompat.h");
+                if !wincompat_dst.exists() {
+                    std::fs::copy(&wincompat_src, &wincompat_dst)
+                        .map_err(|e| format!("Failed to copy wincompat.h: {}", e))?;
+                }
             }
         }
 
