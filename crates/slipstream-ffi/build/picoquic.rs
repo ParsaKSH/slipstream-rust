@@ -140,16 +140,20 @@ pub(crate) fn build_picoquic(
                 .join("include")
                 .join("wincompat.h");
             if wincompat_src.exists() && !wincompat_dst.exists() {
-                std::fs::copy(&wincompat_src, &wincompat_dst).map_err(|e| {
-                    format!("Failed to copy wincompat.h: {}", e)
-                })?;
+                std::fs::copy(&wincompat_src, &wincompat_dst)
+                    .map_err(|e| format!("Failed to copy wincompat.h: {}", e))?;
             }
         }
+
+        // Build only picoquic-core (and its dependencies: picotls-core, picotls-openssl, etc.).
+        // Building all targets would require brotli and other optional deps not needed at runtime.
         let build = Command::new("cmake")
             .arg("--build")
             .arg(&build_dir)
             .arg("--config")
             .arg("Release")
+            .arg("--target")
+            .arg("picoquic-core")
             .status()?;
         if !build.success() {
             return Err("picoquic cmake build failed".into());
