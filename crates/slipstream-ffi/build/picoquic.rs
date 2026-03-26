@@ -14,10 +14,6 @@ pub(crate) fn build_picoquic(
     target: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = locate_repo_root().ok_or("Could not locate repository root for picoquic build")?;
-    let script = root.join("scripts").join("build_picoquic.sh");
-    if !script.exists() {
-        return Err("scripts/build_picoquic.sh not found; run git submodule update --init --recursive vendor/picoquic".into());
-    }
     let picoquic_dir = env::var_os("PICOQUIC_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("vendor").join("picoquic"));
@@ -28,39 +24,89 @@ pub(crate) fn build_picoquic(
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join(".picoquic-build"));
 
-    let mut command = Command::new(script);
-    command
-        .env("PICOQUIC_DIR", picoquic_dir)
-        .env("PICOQUIC_BUILD_DIR", build_dir)
-        .env("PICOQUIC_TARGET", target);
-    if target.contains("android") {
-        if let Ok(value) = env::var("ANDROID_NDK_HOME") {
-            command.env("ANDROID_NDK_HOME", value);
+    // On Windows or when bash is unavailable, use cmake directly.
+    // On Unix, prefer the shell script for backward compatibility.
+    let use_script = !cfg!(target_os = "windows") && {
+        let script = root.join("scripts").join("build_picoquic.sh");
+        script.exists()
+    };
+
+    if use_script {
+        let script = root.join("scripts").join("build_picoquic.sh");
+        let mut command = Command::new(script);
+        command
+            .env("PICOQUIC_DIR", &picoquic_dir)
+            .env("PICOQUIC_BUILD_DIR", &build_dir)
+            .env("PICOQUIC_TARGET", target);
+        if target.contains("android") {
+            if let Ok(value) = env::var("ANDROID_NDK_HOME") {
+                command.env("ANDROID_NDK_HOME", value);
+            }
+            if let Ok(value) = env::var("ANDROID_ABI") {
+                command.env("ANDROID_ABI", value);
+            }
+            if let Ok(value) = env::var("ANDROID_PLATFORM") {
+                command.env("ANDROID_PLATFORM", value);
+            }
         }
-        if let Ok(value) = env::var("ANDROID_ABI") {
-            command.env("ANDROID_ABI", value);
+        if let Some(root) = &openssl_paths.root {
+            command.env("OPENSSL_ROOT_DIR", root);
         }
-        if let Ok(value) = env::var("ANDROID_PLATFORM") {
-            command.env("ANDROID_PLATFORM", value);
+        let prefer_static_openssl = cfg!(feature = "openssl-static");
+        let openssl_no_vendor = env::var_os("OPENSSL_NO_VENDOR").is_some();
+        let explicit_static = env::var_os("OPENSSL_USE_STATIC_LIBS").is_some();
+        if prefer_static_openssl && !openssl_no_vendor && !explicit_static {
+            command.env("OPENSSL_USE_STATIC_LIBS", "TRUE");
         }
-    }
-    if let Some(root) = &openssl_paths.root {
-        command.env("OPENSSL_ROOT_DIR", root);
-    }
-    let prefer_static_openssl = cfg!(feature = "openssl-static");
-    let openssl_no_vendor = env::var_os("OPENSSL_NO_VENDOR").is_some();
-    let explicit_static = env::var_os("OPENSSL_USE_STATIC_LIBS").is_some();
-    if prefer_static_openssl && !openssl_no_vendor && !explicit_static {
-        command.env("OPENSSL_USE_STATIC_LIBS", "TRUE");
-    }
-    if let Some(include) = &openssl_paths.include {
-        command.env("OPENSSL_INCLUDE_DIR", include);
-    }
-    let status = command.status()?;
-    if !status.success() {
-        return Err(
-            "picoquic auto-build failed (run scripts/build_picoquic.sh for details)".into(),
-        );
+        if let Some(include) = &openssl_paths.include {
+            command.env("OPENSSL_INCLUDE_DIR", include);
+        }
+        let status = command.status()?;
+        if !status.success() {
+            return Err(
+                "picoquic auto-build failed (run scripts/build_picoquic.sh for details)".into(),
+            );
+        }
+    } else {
+        // Native cmake invocation (works on Windows and anywhere without bash).
+        let mut cmake_args: Vec<String> = vec![
+            "-DCMAKE_BUILD_TYPE=Release".to_string(),
+            "-DPICOQUIC_FETCH_PTLS=ON".to_string(),
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON".to_string(),
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5".to_string(),
+        ];
+        if let Some(root) = &openssl_paths.root {
+            cmake_args.push(format!("-DOPENSSL_ROOT_DIR={}", root.display()));
+        }
+        if let Some(include) = &openssl_paths.include {
+            cmake_args.push(format!("-DOPENSSL_INCLUDE_DIR={}", include.display()));
+        }
+        let prefer_static_openssl = cfg!(feature = "openssl-static");
+        let openssl_no_vendor = env::var_os("OPENSSL_NO_VENDOR").is_some();
+        let explicit_static = env::var_os("OPENSSL_USE_STATIC_LIBS").is_some();
+        if prefer_static_openssl && !openssl_no_vendor && !explicit_static {
+            cmake_args.push("-DOPENSSL_USE_STATIC_LIBS=TRUE".to_string());
+        }
+
+        let configure = Command::new("cmake")
+            .arg("-S")
+            .arg(&picoquic_dir)
+            .arg("-B")
+            .arg(&build_dir)
+            .args(&cmake_args)
+            .status()?;
+        if !configure.success() {
+            return Err("picoquic cmake configure failed".into());
+        }
+        let build = Command::new("cmake")
+            .arg("--build")
+            .arg(&build_dir)
+            .arg("--config")
+            .arg("Release")
+            .status()?;
+        if !build.success() {
+            return Err("picoquic cmake build failed".into());
+        }
     }
     Ok(())
 }
@@ -272,6 +318,7 @@ fn resolve_picoquic_libs_split(
 }
 
 fn find_lib_variant<'a>(dir: &Path, underscored: &'a str, hyphenated: &'a str) -> Option<&'a str> {
+    // Unix (.a)
     let underscored_path = dir.join(format!("lib{}.a", underscored));
     if underscored_path.exists() {
         return Some(underscored);
@@ -279,6 +326,25 @@ fn find_lib_variant<'a>(dir: &Path, underscored: &'a str, hyphenated: &'a str) -
     let hyphen_path = dir.join(format!("lib{}.a", hyphenated));
     if hyphen_path.exists() {
         return Some(hyphenated);
+    }
+    // Windows/MSVC (.lib)
+    let underscored_lib = dir.join(format!("{}.lib", underscored));
+    if underscored_lib.exists() {
+        return Some(underscored);
+    }
+    let hyphen_lib = dir.join(format!("{}.lib", hyphenated));
+    if hyphen_lib.exists() {
+        return Some(hyphenated);
+    }
+    // MSVC Release subdirectory
+    let release_dir = dir.join("Release");
+    if release_dir.is_dir() {
+        if release_dir.join(format!("{}.lib", underscored)).exists() {
+            return Some(underscored);
+        }
+        if release_dir.join(format!("{}.lib", hyphenated)).exists() {
+            return Some(hyphenated);
+        }
     }
     None
 }
