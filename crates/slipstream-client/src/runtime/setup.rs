@@ -3,7 +3,16 @@ use slipstream_core::net::{bind_first_resolved, bind_tcp_listener_addr, bind_udp
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use tokio::net::{TcpListener as TokioTcpListener, UdpSocket as TokioUdpSocket};
 
-pub(crate) fn compute_mtu(domain_len: usize) -> Result<u32, ClientError> {
+pub(crate) fn compute_mtu(
+    domain_len: usize,
+    mtu_override: Option<u32>,
+) -> Result<u32, ClientError> {
+    if let Some(mtu) = mtu_override {
+        if mtu == 0 {
+            return Err(ClientError::new("MTU must be greater than zero"));
+        }
+        return Ok(mtu);
+    }
     if domain_len >= 240 {
         return Err(ClientError::new(
             "Domain name is too long for DNS transport",

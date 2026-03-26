@@ -37,7 +37,7 @@ const DNS_MAX_QUERY_SIZE: usize = 512;
 const IDLE_SLEEP_MS: u64 = 10;
 const IDLE_GC_INTERVAL: Duration = Duration::from_secs(1);
 // Default QUIC MTU for server packets; see docs/config.md for details.
-const QUIC_MTU: u32 = 900;
+pub(crate) const DEFAULT_QUIC_MTU: u32 = 900;
 pub(crate) const STREAM_READ_CHUNK_BYTES: usize = 4096;
 pub(crate) const DEFAULT_TCP_RCVBUF_BYTES: usize = 256 * 1024;
 pub(crate) const TARGET_WRITE_COALESCE_DEFAULT_BYTES: usize = 256 * 1024;
@@ -45,6 +45,7 @@ const FLOW_BLOCKED_LOG_INTERVAL_US: u64 = 1_000_000;
 
 static SHOULD_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+#[cfg(unix)]
 extern "C" fn handle_sigterm(_signum: libc::c_int) {
     SHOULD_SHUTDOWN.store(true, Ordering::Relaxed);
 }
@@ -80,6 +81,7 @@ pub struct ServerConfig {
     pub reset_seed_path: Option<String>,
     pub domains: Vec<String>,
     pub max_connections: u32,
+    pub mtu: u32,
     pub idle_timeout_seconds: u64,
     pub debug_streams: bool,
     pub debug_commands: bool,
@@ -243,7 +245,7 @@ pub async fn run_server(config: &ServerConfig) -> Result<i32, ServerError> {
                 "Slipstream server congestion algorithm is unavailable",
             ));
         }
-        configure_quic_with_custom(quic, slipstream_server_cc_algorithm, QUIC_MTU);
+        configure_quic_with_custom(quic, slipstream_server_cc_algorithm, config.mtu);
     }
 
     let udp = Arc::new(bind_udp_socket(&config.dns_listen_host, config.dns_listen_port).await?);
@@ -267,6 +269,7 @@ pub async fn run_server(config: &ServerConfig) -> Result<i32, ServerError> {
         return Err(ServerError::new("At least one domain must be configured"));
     }
 
+    #[cfg(unix)]
     unsafe {
         let handler = handle_sigterm as *const () as libc::sighandler_t;
         libc::signal(libc::SIGTERM, handler);
