@@ -38,23 +38,27 @@ jobs:
             target: x86_64-apple-darwin
             artifact_name: slipstream-darwin-amd64
             ext: ""
+            cargo_features: "--features openssl-vendored"
           - name: darwin-arm64
             runner: macos-14
             target: aarch64-apple-darwin
             artifact_name: slipstream-darwin-arm64
             ext: ""
+            cargo_features: ""
           - name: windows-amd64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: slipstream-windows-amd64
             ext: ".exe"
             vcpkg_triplet: x64-windows-static-md
+            cargo_features: ""
           - name: windows-arm64
             runner: windows-latest
             target: aarch64-pc-windows-msvc
             artifact_name: slipstream-windows-arm64
             ext: ".exe"
             vcpkg_triplet: arm64-windows-static-md
+            cargo_features: ""
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
@@ -71,8 +75,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install cmake pkg-config openssl@3
-          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> "$GITHUB_ENV"
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "OPENSSL_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (Windows)
         if: runner.os == 'Windows'
@@ -97,6 +103,7 @@ jobs:
         shell: bash
         run: |
           cargo build --release --target ${{ matrix.target }} \
+            ${{ matrix.cargo_features }} \
             -p slipstream-client -p slipstream-server
 
       - name: Package release archive

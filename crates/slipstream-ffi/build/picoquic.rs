@@ -124,6 +124,27 @@ pub(crate) fn build_picoquic(
         if !configure.success() {
             return Err("picoquic cmake configure failed".into());
         }
+
+        // Workaround: picotls on Windows includes "wincompat.h" from picotls.h,
+        // but the win/ directory isn't added to include paths by its cmake.
+        // Copy wincompat.h to the include/ directory so the compiler can find it.
+        if target.contains("windows") {
+            let wincompat_src = build_dir
+                .join("_deps")
+                .join("picotls-src")
+                .join("win")
+                .join("wincompat.h");
+            let wincompat_dst = build_dir
+                .join("_deps")
+                .join("picotls-src")
+                .join("include")
+                .join("wincompat.h");
+            if wincompat_src.exists() && !wincompat_dst.exists() {
+                std::fs::copy(&wincompat_src, &wincompat_dst).map_err(|e| {
+                    format!("Failed to copy wincompat.h: {}", e)
+                })?;
+            }
+        }
         let build = Command::new("cmake")
             .arg("--build")
             .arg(&build_dir)
