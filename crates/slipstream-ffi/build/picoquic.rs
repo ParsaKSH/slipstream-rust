@@ -126,21 +126,43 @@ pub(crate) fn build_picoquic(
         }
 
         // Workaround: picotls on Windows includes "wincompat.h" from picotls.h,
-        // but it's actually provided by picoquic (at picoquic/wincompat.h).
-        // When picotls is built as a FetchContent dependency, picoquic's include
-        // path isn't available. Copy it to the picotls include directory.
+        // but it's provided by picoquic and not in picotls's own include path.
+        // Generate a wincompat.h that includes both Winsock2 AND ws2tcpip
+        // (the picoquic version only has Winsock2, but picotls needs inet_pton
+        // and sockaddr_in6 from ws2tcpip.h).
         if target.contains("windows") {
-            let wincompat_src = picoquic_dir.join("picoquic").join("wincompat.h");
-            if wincompat_src.exists() {
-                let picotls_include = build_dir
-                    .join("_deps")
-                    .join("picotls-src")
-                    .join("include");
-                let wincompat_dst = picotls_include.join("wincompat.h");
-                if !wincompat_dst.exists() {
-                    std::fs::copy(&wincompat_src, &wincompat_dst)
-                        .map_err(|e| format!("Failed to copy wincompat.h: {}", e))?;
-                }
+            let picotls_include =
+                build_dir.join("_deps").join("picotls-src").join("include");
+            let wincompat_dst = picotls_include.join("wincompat.h");
+            if picotls_include.exists() && !wincompat_dst.exists() {
+                let content = r#"#ifndef WINCOMPAT_H
+#define WINCOMPAT_H
+#include <stdint.h>
+#define ssize_t int
+#include <Winsock2.h>
+#include <ws2tcpip.h>
+#ifndef gettimeofday
+#define gettimeofday wintimeofday
+#ifndef __attribute__
+#define __attribute__(X)
+#endif
+#pragma warning(disable : 4214)
+#ifdef __cplusplus
+extern "C" {
+#endif
+    struct timezone {
+        int tz_minuteswest;
+        int tz_dsttime;
+    };
+    int wintimeofday(struct timeval* tv, struct timezone* tz);
+#ifdef __cplusplus
+}
+#endif
+#endif
+#endif /* WINCOMPAT_H */
+"#;
+                std::fs::write(&wincompat_dst, content)
+                    .map_err(|e| format!("Failed to write wincompat.h: {}", e))?;
             }
         }
 
