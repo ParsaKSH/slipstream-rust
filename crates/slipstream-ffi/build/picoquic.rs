@@ -114,28 +114,20 @@ pub(crate) fn build_picoquic(
             cmake_args.push("-DOPENSSL_USE_STATIC_LIBS=TRUE".to_string());
         }
 
-        let configure = Command::new("cmake")
-            .arg("-S")
-            .arg(&picoquic_dir)
-            .arg("-B")
-            .arg(&build_dir)
-            .args(&cmake_args)
-            .status()?;
-        if !configure.success() {
-            return Err("picoquic cmake configure failed".into());
-        }
-
-        // Workaround: picotls on Windows includes "wincompat.h" from picotls.h,
-        // but it's provided by picoquic and not in picotls's own include path.
-        // Generate a wincompat.h that includes both Winsock2 AND ws2tcpip
-        // (the picoquic version only has Winsock2, but picotls needs inet_pton
-        // and sockaddr_in6 from ws2tcpip.h).
+        // Windows MSVC workaround: picoquic and picotls expect a "wincompat.h"
+        // that provides ssize_t, Winsock2, and ws2tcpip types. The picoquic
+        // version only includes Winsock2, and picotls doesn't ship one at all.
+        // We generate a comprehensive version and force-include it via /FI so
+        // all C files get the right types before any headers are parsed.
+        // This MUST happen before cmake configure so CMAKE_C_FLAGS is set.
         if target.contains("windows") {
-            let picotls_include =
-                build_dir.join("_deps").join("picotls-src").join("include");
-            let wincompat_dst = picotls_include.join("wincompat.h");
-            if picotls_include.exists() && !wincompat_dst.exists() {
-                let content = r#"#ifndef WINCOMPAT_H
+            let compat_dir = build_dir.join("wincompat_include");
+            let wincompat_path = compat_dir.join("wincompat.h");
+            std::fs::create_dir_all(&compat_dir)
+                .map_err(|e| format!("Failed to create wincompat dir: {}", e))?;
+            std::fs::write(
+                &wincompat_path,
+                r#"#ifndef WINCOMPAT_H
 #define WINCOMPAT_H
 #include <stdint.h>
 #define ssize_t int
@@ -160,10 +152,27 @@ extern "C" {
 #endif
 #endif
 #endif /* WINCOMPAT_H */
-"#;
-                std::fs::write(&wincompat_dst, content)
-                    .map_err(|e| format!("Failed to write wincompat.h: {}", e))?;
-            }
+"#,
+            )
+            .map_err(|e| format!("Failed to write wincompat.h: {}", e))?;
+
+            // Force-include wincompat.h via MSVC /FI flag so ssize_t and
+            // winsock types are available before any other headers.
+            cmake_args.push(format!(
+                "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /W3 /FI\"{}\"",
+                wincompat_path.display()
+            ));
+        }
+
+        let configure = Command::new("cmake")
+            .arg("-S")
+            .arg(&picoquic_dir)
+            .arg("-B")
+            .arg(&build_dir)
+            .args(&cmake_args)
+            .status()?;
+        if !configure.success() {
+            return Err("picoquic cmake configure failed".into());
         }
 
         // Build only picoquic-core (and its dependencies: picotls-core, picotls-openssl, etc.).
