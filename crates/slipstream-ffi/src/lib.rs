@@ -5,6 +5,7 @@ use slipstream_core::HostPort;
 
 pub mod picoquic;
 pub mod runtime;
+pub mod sockcompat;
 
 pub use picoquic::get_pacing_rate;
 pub use picoquic::get_rtt;

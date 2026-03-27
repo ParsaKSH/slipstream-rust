@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
-use libc::{c_char, c_int, c_uint, c_void, size_t, sockaddr, sockaddr_storage};
+use crate::sockcompat::sockaddr_storage;
+use libc::{c_char, c_int, c_uint, c_void, size_t, sockaddr};
 
 pub const PICOQUIC_CONNECTION_ID_MAX_SIZE: usize = 20;
 pub const PICOQUIC_MAX_PACKET_SIZE: usize = 1536;
