@@ -112,34 +112,41 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           base_name="${{ matrix.artifact_name }}"
-          archive_name="${base_name}-${tag}"
+          target_suffix="${base_name#slipstream-}"
           bin_dir="target/${{ matrix.target }}/release"
-          staging="${archive_name}"
 
-          mkdir -p "${staging}"
-          cp "${bin_dir}/slipstream-client${{ matrix.ext }}" "${staging}/"
-          cp "${bin_dir}/slipstream-server${{ matrix.ext }}" "${staging}/"
-          cp README.md LICENSE* docs/*.md "${staging}/" 2>/dev/null || true
+          for component in slipstream-client slipstream-server; do
+            archive_name="${component}-${target_suffix}-${tag}"
+            staging="${archive_name}"
 
-          if [[ "${{ matrix.ext }}" == ".exe" ]]; then
-            7z a "${archive_name}.zip" "${staging}"
-          else
-            tar czf "${archive_name}.tar.gz" "${staging}"
-          fi
+            mkdir -p "${staging}"
+            cp "${bin_dir}/${component}${{ matrix.ext }}" "${staging}/"
+            cp README.md LICENSE* docs/*.md "${staging}/" 2>/dev/null || true
 
-          cd "${staging}"
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum slipstream-client${{ matrix.ext }} slipstream-server${{ matrix.ext }} > SHA256SUMS
-          else
-            shasum -a 256 slipstream-client${{ matrix.ext }} slipstream-server${{ matrix.ext }} > SHA256SUMS
-          fi
+            if [[ "${{ matrix.ext }}" == ".exe" ]]; then
+              7z a "${archive_name}.zip" "${staging}"
+            else
+              tar czf "${archive_name}.tar.gz" "${staging}"
+            fi
+
+            cd "${staging}"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum ${component}${{ matrix.ext }} > SHA256SUMS
+            else
+              shasum -a 256 ${component}${{ matrix.ext }} > SHA256SUMS
+            fi
+            cd ..
+          done
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            ${{ matrix.artifact_name }}-*
+            slipstream-client-*.tar.gz
+            slipstream-client-*.zip
+            slipstream-server-*.tar.gz
+            slipstream-server-*.zip
           if-no-files-found: error
 
   release:
