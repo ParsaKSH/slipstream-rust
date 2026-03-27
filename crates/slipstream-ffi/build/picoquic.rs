@@ -184,9 +184,7 @@ extern "C" {
         // but sockloop.c defines it as DWORD WINAPI fn(LPVOID) on Windows.
         // This causes error C2040 (return type mismatch).
         if target.contains("windows") {
-            let header = picoquic_dir
-                .join("picoquic")
-                .join("picoquic_packet_loop.h");
+            let header = picoquic_dir.join("picoquic").join("picoquic_packet_loop.h");
             if header.exists() {
                 let content = std::fs::read_to_string(&header)
                     .map_err(|e| format!("Failed to read picoquic_packet_loop.h: {}", e))?;
