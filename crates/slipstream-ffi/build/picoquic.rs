@@ -178,6 +178,30 @@ extern "C" {
             return Err("picoquic cmake configure failed".into());
         }
 
+        // Windows MSVC: patch picoquic_packet_loop.h to use the correct
+        // thread function signature. The header unconditionally declares
+        //   void* picoquic_packet_loop_v3(void* v_ctx);
+        // but sockloop.c defines it as DWORD WINAPI fn(LPVOID) on Windows.
+        // This causes error C2040 (return type mismatch).
+        if target.contains("windows") {
+            let header = picoquic_dir
+                .join("picoquic")
+                .join("picoquic_packet_loop.h");
+            if header.exists() {
+                let content = std::fs::read_to_string(&header)
+                    .map_err(|e| format!("Failed to read picoquic_packet_loop.h: {}", e))?;
+                let patched = content.replace(
+                    "void* picoquic_packet_loop_v3(void* v_ctx);",
+                    "#ifdef _WINDOWS\nDWORD WINAPI picoquic_packet_loop_v3(LPVOID v_ctx);\n#else\nvoid* picoquic_packet_loop_v3(void* v_ctx);\n#endif",
+                );
+                if patched != content {
+                    std::fs::write(&header, patched)
+                        .map_err(|e| format!("Failed to patch picoquic_packet_loop.h: {}", e))?;
+                    println!("cargo:warning=Patched picoquic_packet_loop_v3 signature for MSVC");
+                }
+            }
+        }
+
         // Build only picoquic-core (and its dependencies: picotls-core, picotls-openssl, etc.).
         // Building all targets would require brotli and other optional deps not needed at runtime.
         let build = Command::new("cmake")
