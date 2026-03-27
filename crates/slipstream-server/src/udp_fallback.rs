@@ -29,7 +29,7 @@ pub(crate) struct PacketContext<'a> {
     pub(crate) domains: &'a [&'a str],
     pub(crate) quic: *mut picoquic_quic_t,
     pub(crate) current_time: u64,
-    pub(crate) local_addr_storage: &'a libc::sockaddr_storage,
+    pub(crate) local_addr_storage: &'a slipstream_ffi::sockcompat::sockaddr_storage,
 }
 
 /// Tracks per-peer routing for UDP fallback based on DNS decoding outcomes.
@@ -56,7 +56,7 @@ mod session;
 
 pub(crate) use decode::handle_packet;
 
-fn dummy_sockaddr_storage() -> libc::sockaddr_storage {
+fn dummy_sockaddr_storage() -> slipstream_ffi::sockcompat::sockaddr_storage {
     socket_addr_to_storage(SocketAddr::new(
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
         12345,

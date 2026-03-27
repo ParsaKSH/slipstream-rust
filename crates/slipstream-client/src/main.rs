@@ -58,6 +58,8 @@ struct Args {
     debug_poll: bool,
     #[arg(long = "debug-streams")]
     debug_streams: bool,
+    #[arg(long = "mtu", value_name = "BYTES", value_parser = parse_mtu)]
+    mtu: Option<u32>,
 }
 
 fn main() {
@@ -182,6 +184,7 @@ fn main() {
         keep_alive_interval: keep_alive_interval as usize,
         debug_poll: args.debug_poll,
         debug_streams: args.debug_streams,
+        mtu_override: args.mtu,
     };
 
     let runtime = Builder::new_current_thread()
@@ -201,6 +204,17 @@ fn parse_domain(input: &str) -> Result<String, String> {
 
 fn parse_resolver(input: &str) -> Result<HostPort, String> {
     parse_host_port(input, 53, AddressKind::Resolver).map_err(|err| err.to_string())
+}
+
+fn parse_mtu(input: &str) -> Result<u32, String> {
+    let trimmed = input.trim();
+    let value = trimmed
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid MTU value: {}", trimmed))?;
+    if value == 0 {
+        return Err("MTU must be greater than zero".to_string());
+    }
+    Ok(value)
 }
 
 fn build_resolvers(matches: &clap::ArgMatches, require: bool) -> Result<Vec<ResolverSpec>, String> {

@@ -14,10 +14,6 @@ pub(crate) fn build_picoquic(
     target: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = locate_repo_root().ok_or("Could not locate repository root for picoquic build")?;
-    let script = root.join("scripts").join("build_picoquic.sh");
-    if !script.exists() {
-        return Err("scripts/build_picoquic.sh not found; run git submodule update --init --recursive vendor/picoquic".into());
-    }
     let picoquic_dir = env::var_os("PICOQUIC_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("vendor").join("picoquic"));
@@ -28,39 +24,195 @@ pub(crate) fn build_picoquic(
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join(".picoquic-build"));
 
-    let mut command = Command::new(script);
-    command
-        .env("PICOQUIC_DIR", picoquic_dir)
-        .env("PICOQUIC_BUILD_DIR", build_dir)
-        .env("PICOQUIC_TARGET", target);
-    if target.contains("android") {
-        if let Ok(value) = env::var("ANDROID_NDK_HOME") {
-            command.env("ANDROID_NDK_HOME", value);
+    // Use native cmake when:
+    // - On Windows (no bash available)
+    // - On macOS cross-compiling (need CMAKE_OSX_ARCHITECTURES the bash script doesn't pass)
+    // Otherwise prefer the shell script for backward compatibility.
+    let is_macos_cross = cfg!(target_os = "macos") && {
+        let host_arch = if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        !target.contains(host_arch)
+    };
+    let use_script = !cfg!(target_os = "windows") && !is_macos_cross && {
+        let script = root.join("scripts").join("build_picoquic.sh");
+        script.exists()
+    };
+
+    if use_script {
+        let script = root.join("scripts").join("build_picoquic.sh");
+        let mut command = Command::new(script);
+        command
+            .env("PICOQUIC_DIR", &picoquic_dir)
+            .env("PICOQUIC_BUILD_DIR", &build_dir)
+            .env("PICOQUIC_TARGET", target);
+        if target.contains("android") {
+            if let Ok(value) = env::var("ANDROID_NDK_HOME") {
+                command.env("ANDROID_NDK_HOME", value);
+            }
+            if let Ok(value) = env::var("ANDROID_ABI") {
+                command.env("ANDROID_ABI", value);
+            }
+            if let Ok(value) = env::var("ANDROID_PLATFORM") {
+                command.env("ANDROID_PLATFORM", value);
+            }
         }
-        if let Ok(value) = env::var("ANDROID_ABI") {
-            command.env("ANDROID_ABI", value);
+        if let Some(root) = &openssl_paths.root {
+            command.env("OPENSSL_ROOT_DIR", root);
         }
-        if let Ok(value) = env::var("ANDROID_PLATFORM") {
-            command.env("ANDROID_PLATFORM", value);
+        let prefer_static_openssl = cfg!(feature = "openssl-static");
+        let openssl_no_vendor = env::var_os("OPENSSL_NO_VENDOR").is_some();
+        let explicit_static = env::var_os("OPENSSL_USE_STATIC_LIBS").is_some();
+        if prefer_static_openssl && !openssl_no_vendor && !explicit_static {
+            command.env("OPENSSL_USE_STATIC_LIBS", "TRUE");
         }
-    }
-    if let Some(root) = &openssl_paths.root {
-        command.env("OPENSSL_ROOT_DIR", root);
-    }
-    let prefer_static_openssl = cfg!(feature = "openssl-static");
-    let openssl_no_vendor = env::var_os("OPENSSL_NO_VENDOR").is_some();
-    let explicit_static = env::var_os("OPENSSL_USE_STATIC_LIBS").is_some();
-    if prefer_static_openssl && !openssl_no_vendor && !explicit_static {
-        command.env("OPENSSL_USE_STATIC_LIBS", "TRUE");
-    }
-    if let Some(include) = &openssl_paths.include {
-        command.env("OPENSSL_INCLUDE_DIR", include);
-    }
-    let status = command.status()?;
-    if !status.success() {
-        return Err(
-            "picoquic auto-build failed (run scripts/build_picoquic.sh for details)".into(),
-        );
+        if let Some(include) = &openssl_paths.include {
+            command.env("OPENSSL_INCLUDE_DIR", include);
+        }
+        let status = command.status()?;
+        if !status.success() {
+            return Err(
+                "picoquic auto-build failed (run scripts/build_picoquic.sh for details)".into(),
+            );
+        }
+    } else {
+        // Native cmake invocation (works on Windows, macOS cross-compile, and anywhere without bash).
+        let mut cmake_args: Vec<String> = vec![
+            "-DCMAKE_BUILD_TYPE=Release".to_string(),
+            "-DPICOQUIC_FETCH_PTLS=ON".to_string(),
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON".to_string(),
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5".to_string(),
+        ];
+
+        // Windows ARM64 cross-compilation (MSVC Visual Studio generator uses -A flag).
+        if target.contains("aarch64") && target.contains("windows") {
+            cmake_args.push("-A".to_string());
+            cmake_args.push("ARM64".to_string());
+        }
+
+        // macOS cross-compilation architecture flag.
+        if target.contains("apple") {
+            if target.contains("x86_64") {
+                cmake_args.push("-DCMAKE_OSX_ARCHITECTURES=x86_64".to_string());
+            } else if target.contains("aarch64") {
+                cmake_args.push("-DCMAKE_OSX_ARCHITECTURES=arm64".to_string());
+            }
+        }
+
+        if let Some(root) = &openssl_paths.root {
+            cmake_args.push(format!("-DOPENSSL_ROOT_DIR={}", root.display()));
+        }
+        if let Some(include) = &openssl_paths.include {
+            cmake_args.push(format!("-DOPENSSL_INCLUDE_DIR={}", include.display()));
+        }
+        let prefer_static_openssl = cfg!(feature = "openssl-static");
+        let openssl_no_vendor = env::var_os("OPENSSL_NO_VENDOR").is_some();
+        let explicit_static = env::var_os("OPENSSL_USE_STATIC_LIBS").is_some();
+        if prefer_static_openssl && !openssl_no_vendor && !explicit_static {
+            cmake_args.push("-DOPENSSL_USE_STATIC_LIBS=TRUE".to_string());
+        }
+
+        // Windows MSVC workaround: picoquic and picotls expect a "wincompat.h"
+        // that provides ssize_t, Winsock2, and ws2tcpip types. The picoquic
+        // version only includes Winsock2, and picotls doesn't ship one at all.
+        // We generate a comprehensive version and force-include it via /FI so
+        // all C files get the right types before any headers are parsed.
+        // This MUST happen before cmake configure so CMAKE_C_FLAGS is set.
+        if target.contains("windows") {
+            let compat_dir = build_dir.join("wincompat_include");
+            let wincompat_path = compat_dir.join("wincompat.h");
+            std::fs::create_dir_all(&compat_dir)
+                .map_err(|e| format!("Failed to create wincompat dir: {}", e))?;
+            std::fs::write(
+                &wincompat_path,
+                r#"#ifndef WINCOMPAT_H
+#define WINCOMPAT_H
+#include <stdint.h>
+#define ssize_t int
+#include <Winsock2.h>
+#include <ws2tcpip.h>
+#ifndef gettimeofday
+#define gettimeofday wintimeofday
+#ifndef __attribute__
+#define __attribute__(X)
+#endif
+#pragma warning(disable : 4214)
+#ifdef __cplusplus
+extern "C" {
+#endif
+    struct timezone {
+        int tz_minuteswest;
+        int tz_dsttime;
+    };
+    int wintimeofday(struct timeval* tv, struct timezone* tz);
+#ifdef __cplusplus
+}
+#endif
+#endif
+#endif /* WINCOMPAT_H */
+"#,
+            )
+            .map_err(|e| format!("Failed to write wincompat.h: {}", e))?;
+
+            // Force-include wincompat.h via MSVC /FI flag so ssize_t and
+            // winsock types are available before any other headers.
+            // Also add /I so #include "wincompat.h" directives in picotls
+            // can find the file via normal include path search.
+            cmake_args.push(format!(
+                "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /W3 /FI\"{}\" /I\"{}\"",
+                wincompat_path.display(),
+                compat_dir.display()
+            ));
+        }
+
+        let configure = Command::new("cmake")
+            .arg("-S")
+            .arg(&picoquic_dir)
+            .arg("-B")
+            .arg(&build_dir)
+            .args(&cmake_args)
+            .status()?;
+        if !configure.success() {
+            return Err("picoquic cmake configure failed".into());
+        }
+
+        // Windows MSVC: patch picoquic_packet_loop.h to use the correct
+        // thread function signature. The header unconditionally declares
+        //   void* picoquic_packet_loop_v3(void* v_ctx);
+        // but sockloop.c defines it as DWORD WINAPI fn(LPVOID) on Windows.
+        // This causes error C2040 (return type mismatch).
+        if target.contains("windows") {
+            let header = picoquic_dir.join("picoquic").join("picoquic_packet_loop.h");
+            if header.exists() {
+                let content = std::fs::read_to_string(&header)
+                    .map_err(|e| format!("Failed to read picoquic_packet_loop.h: {}", e))?;
+                let patched = content.replace(
+                    "void* picoquic_packet_loop_v3(void* v_ctx);",
+                    "#ifdef _WINDOWS\nDWORD WINAPI picoquic_packet_loop_v3(LPVOID v_ctx);\n#else\nvoid* picoquic_packet_loop_v3(void* v_ctx);\n#endif",
+                );
+                if patched != content {
+                    std::fs::write(&header, patched)
+                        .map_err(|e| format!("Failed to patch picoquic_packet_loop.h: {}", e))?;
+                    println!("cargo:warning=Patched picoquic_packet_loop_v3 signature for MSVC");
+                }
+            }
+        }
+
+        // Build only picoquic-core (and its dependencies: picotls-core, picotls-openssl, etc.).
+        // Building all targets would require brotli and other optional deps not needed at runtime.
+        let build = Command::new("cmake")
+            .arg("--build")
+            .arg(&build_dir)
+            .arg("--config")
+            .arg("Release")
+            .arg("--target")
+            .arg("picoquic-core")
+            .status()?;
+        if !build.success() {
+            return Err("picoquic cmake build failed".into());
+        }
     }
     Ok(())
 }
@@ -185,10 +337,13 @@ pub(crate) fn locate_picotls_include_dir() -> Option<PathBuf> {
 
 pub(crate) fn resolve_picoquic_libs(dir: &Path) -> Option<PicoquicLibs> {
     if let Some(libs) = resolve_picoquic_libs_single_dir(dir) {
-        return Some(PicoquicLibs {
-            search_dirs: vec![dir.to_path_buf()],
-            libs,
-        });
+        let mut search_dirs = vec![dir.to_path_buf()];
+        // MSVC puts libs in Release/ subdirectory
+        let release = dir.join("Release");
+        if release.is_dir() {
+            search_dirs.push(release);
+        }
+        return Some(PicoquicLibs { search_dirs, libs });
     }
 
     let mut picotls_dirs = vec![dir.join("_deps").join("picotls-build")];
@@ -198,8 +353,17 @@ pub(crate) fn resolve_picoquic_libs(dir: &Path) -> Option<PicoquicLibs> {
     for picotls_dir in picotls_dirs {
         if let Some(libs) = resolve_picoquic_libs_split(dir, &picotls_dir) {
             let mut search_dirs = vec![dir.to_path_buf()];
-            if picotls_dir != dir && !search_dirs.contains(&picotls_dir) {
-                search_dirs.push(picotls_dir);
+            // MSVC Release subdirectories for picoquic and picotls
+            let release = dir.join("Release");
+            if release.is_dir() {
+                search_dirs.push(release);
+            }
+            if picotls_dir != *dir && !search_dirs.contains(&picotls_dir) {
+                search_dirs.push(picotls_dir.clone());
+            }
+            let ptls_release = picotls_dir.join("Release");
+            if ptls_release.is_dir() && !search_dirs.contains(&ptls_release) {
+                search_dirs.push(ptls_release);
             }
             return Some(PicoquicLibs { search_dirs, libs });
         }
@@ -207,10 +371,16 @@ pub(crate) fn resolve_picoquic_libs(dir: &Path) -> Option<PicoquicLibs> {
 
     if let Some(parent) = dir.parent() {
         if let Some(libs) = resolve_picoquic_libs_split(parent, dir) {
-            return Some(PicoquicLibs {
-                search_dirs: vec![parent.to_path_buf(), dir.to_path_buf()],
-                libs,
-            });
+            let mut search_dirs = vec![parent.to_path_buf(), dir.to_path_buf()];
+            let release = parent.join("Release");
+            if release.is_dir() {
+                search_dirs.push(release);
+            }
+            let dir_release = dir.join("Release");
+            if dir_release.is_dir() {
+                search_dirs.push(dir_release);
+            }
+            return Some(PicoquicLibs { search_dirs, libs });
         }
         if let Some(grandparent) = parent.parent() {
             if let Some(libs) = resolve_picoquic_libs_split(grandparent, dir) {
@@ -272,6 +442,7 @@ fn resolve_picoquic_libs_split(
 }
 
 fn find_lib_variant<'a>(dir: &Path, underscored: &'a str, hyphenated: &'a str) -> Option<&'a str> {
+    // Unix (.a)
     let underscored_path = dir.join(format!("lib{}.a", underscored));
     if underscored_path.exists() {
         return Some(underscored);
@@ -279,6 +450,25 @@ fn find_lib_variant<'a>(dir: &Path, underscored: &'a str, hyphenated: &'a str) -
     let hyphen_path = dir.join(format!("lib{}.a", hyphenated));
     if hyphen_path.exists() {
         return Some(hyphenated);
+    }
+    // Windows/MSVC (.lib)
+    let underscored_lib = dir.join(format!("{}.lib", underscored));
+    if underscored_lib.exists() {
+        return Some(underscored);
+    }
+    let hyphen_lib = dir.join(format!("{}.lib", hyphenated));
+    if hyphen_lib.exists() {
+        return Some(hyphenated);
+    }
+    // MSVC Release subdirectory
+    let release_dir = dir.join("Release");
+    if release_dir.is_dir() {
+        if release_dir.join(format!("{}.lib", underscored)).exists() {
+            return Some(underscored);
+        }
+        if release_dir.join(format!("{}.lib", hyphenated)).exists() {
+            return Some(hyphenated);
+        }
     }
     None
 }

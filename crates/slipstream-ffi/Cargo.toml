@@ -17,3 +17,6 @@ default = []
 openssl-vendored = ["dep:openssl-sys", "openssl-sys/vendored", "openssl-static"]
 openssl-static = []
 picoquic-minimal-build = []
+
+[build-dependencies]
+cc = "1.2"

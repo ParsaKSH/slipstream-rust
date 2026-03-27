@@ -5,7 +5,7 @@ mod target;
 mod udp_fallback;
 
 use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser};
-use server::{run_server, ServerConfig};
+use server::{run_server, ServerConfig, DEFAULT_QUIC_MTU};
 use slipstream_core::{
     cli::{exit_with_error, exit_with_message, init_logging, unwrap_or_exit},
     normalize_domain, parse_host_port, parse_host_port_parts, sip003, AddressKind, HostPort,
@@ -41,6 +41,8 @@ struct Args {
     domains: Vec<String>,
     #[arg(long = "max-connections", default_value_t = 256, value_parser = parse_max_connections)]
     max_connections: u32,
+    #[arg(long = "mtu", default_value_t = DEFAULT_QUIC_MTU, value_parser = parse_mtu)]
+    mtu: u32,
     #[arg(long = "idle-timeout-seconds", default_value_t = 60)]
     idle_timeout_seconds: u64,
     #[arg(long = "debug-streams")]
@@ -147,6 +149,14 @@ fn main() {
         args.max_connections
     };
 
+    let mtu = if cli_provided(&matches, "mtu") {
+        args.mtu
+    } else if let Some(value) = sip003::last_option_value(&sip003_env.plugin_options, "mtu") {
+        unwrap_or_exit(parse_mtu(&value), "SIP003 env error", 2)
+    } else {
+        args.mtu
+    };
+
     let config = ServerConfig {
         dns_listen_host,
         dns_listen_port,
@@ -157,6 +167,7 @@ fn main() {
         reset_seed_path,
         domains,
         max_connections,
+        mtu,
         idle_timeout_seconds: args.idle_timeout_seconds,
         debug_streams: args.debug_streams,
         debug_commands: args.debug_commands,
@@ -196,6 +207,17 @@ fn parse_max_connections(input: &str) -> Result<u32, String> {
         .map_err(|_| format!("Invalid max-connections value: {}", trimmed))?;
     if value == 0 {
         return Err("max-connections must be at least 1".to_string());
+    }
+    Ok(value)
+}
+
+fn parse_mtu(input: &str) -> Result<u32, String> {
+    let trimmed = input.trim();
+    let value = trimmed
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid MTU value: {}", trimmed))?;
+    if value == 0 {
+        return Err("MTU must be greater than zero".to_string());
     }
     Ok(value)
 }

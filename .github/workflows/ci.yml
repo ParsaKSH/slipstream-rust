@@ -110,21 +110,49 @@ jobs:
         run: cargo clippy -p slipstream-client -p slipstream-server --features openssl-vendored,picoquic-minimal-build -- -D warnings
 
   build-binaries:
-    name: Build Binaries (${{ matrix.name }})
+    name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: macos-arm64
-            runner: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: slipstream-macos-arm64
-          - name: linux-x86_64
+          - name: linux-amd64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: slipstream-linux-x86_64
+            artifact_name: slipstream-linux-amd64
+            ext: ""
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact_name: slipstream-linux-arm64
+            ext: ""
+          - name: darwin-amd64
+            runner: macos-14
+            target: x86_64-apple-darwin
+            artifact_name: slipstream-darwin-amd64
+            ext: ""
+            cargo_features: "--features openssl-vendored"
+          - name: darwin-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            artifact_name: slipstream-darwin-arm64
+            ext: ""
+            cargo_features: ""
+#          - name: windows-amd64
+#            runner: windows-latest
+#            target: x86_64-pc-windows-msvc
+#            artifact_name: slipstream-windows-amd64
+#            ext: ".exe"
+#            vcpkg_triplet: x64-windows-static-md
+#            cargo_features: ""
+#          - name: windows-arm64
+#            runner: windows-latest
+#            target: aarch64-pc-windows-msvc
+#            artifact_name: slipstream-windows-arm64
+#            ext: ".exe"
+#            vcpkg_triplet: arm64-windows-static-md
+#            cargo_features: ""
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
@@ -141,19 +169,36 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install cmake pkg-config openssl@3
-          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> "$GITHUB_ENV"
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "OPENSSL_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
+
+#      - name: Install build dependencies (Windows)
+#        if: runner.os == 'Windows'
+#        shell: powershell
+#        run: |
+#          choco install pkgconfiglite -y
+#          vcpkg install openssl:${{ matrix.vcpkg_triplet }}
+#          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\${{ matrix.vcpkg_triplet }}"
+#          echo "OPENSSL_DIR=$root" >> $env:GITHUB_ENV
+#          echo "OPENSSL_ROOT_DIR=$root" >> $env:GITHUB_ENV
+#          echo "OPENSSL_INCLUDE_DIR=$root\include" >> $env:GITHUB_ENV
+#          echo "OPENSSL_LIB_DIR=$root\lib" >> $env:GITHUB_ENV
+#          echo "OPENSSL_USE_STATIC_LIBS=TRUE" >> $env:GITHUB_ENV
+#          echo "PKG_CONFIG_PATH=$root\lib\pkgconfig" >> $env:GITHUB_ENV
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build slipstream-client
-        run: cargo build -p slipstream-client --release --target ${{ matrix.target }}
-
-      - name: Build slipstream-server
-        run: cargo build -p slipstream-server --release --target ${{ matrix.target }}
+      - name: Build release binaries
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.target }} \
+            ${{ matrix.cargo_features }} \
+            -p slipstream-client -p slipstream-server
 
       - name: Package binaries
         shell: bash
@@ -163,12 +208,12 @@ jobs:
           base_name="${{ matrix.artifact_name }}"
           bin_dir="target/${{ matrix.target }}/release"
           mkdir -p "${dist_dir}"
-          cp "${bin_dir}/slipstream-client" "${dist_dir}/"
-          cp "${bin_dir}/slipstream-server" "${dist_dir}/"
+          cp "${bin_dir}/slipstream-client${{ matrix.ext }}" "${dist_dir}/"
+          cp "${bin_dir}/slipstream-server${{ matrix.ext }}" "${dist_dir}/"
           if command -v sha256sum >/dev/null 2>&1; then
-            (cd "${dist_dir}" && sha256sum slipstream-client slipstream-server > "${base_name}.sha256")
+            (cd "${dist_dir}" && sha256sum slipstream-client${{ matrix.ext }} slipstream-server${{ matrix.ext }} > "${base_name}.sha256")
           else
-            (cd "${dist_dir}" && shasum -a 256 slipstream-client slipstream-server > "${base_name}.sha256")
+            (cd "${dist_dir}" && shasum -a 256 slipstream-client${{ matrix.ext }} slipstream-server${{ matrix.ext }} > "${base_name}.sha256")
           fi
 
       - name: Upload binaries
@@ -187,13 +232,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # C repo interop disabled (C repo currently broken).
-          # - name: run_local
-          #   script: run_local.sh
-          # - name: run_rust_client
-          #   script: run_rust_client.sh
-          # - name: run_rust_server
-          #   script: run_rust_server.sh
           - name: rust-rust
             script: run_rust_rust.sh
             domains: ""
@@ -207,14 +245,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      # C repo interop disabled (C repo currently broken).
-      # - name: Check out C slipstream
-      #   uses: actions/checkout@v4
-      #   with:
-      #     repository: EndPositive/slipstream
-      #     path: slipstream-c
-      #     submodules: recursive
 
       - name: Install build dependencies
         run: |
@@ -264,24 +294,11 @@ jobs:
             min_exfil: "5"
             min_download: "25"
             artifact_glob: bench-rust-rust-mixed-*
-          # C repo benchmark disabled (C repo currently broken).
-          # - name: c-c
-          #   script: run_c_c_10mb.sh
-          #   needs_c: true
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      # C repo benchmark disabled (C repo currently broken).
-      # - name: Check out C slipstream
-      #   if: matrix.needs_c
-      #   uses: actions/checkout@v4
-      #   with:
-      #     repository: EndPositive/slipstream
-      #     path: slipstream-c
-      #     submodules: recursive
 
       - name: Install build dependencies
         run: |
