@@ -158,9 +158,12 @@ extern "C" {
 
             // Force-include wincompat.h via MSVC /FI flag so ssize_t and
             // winsock types are available before any other headers.
+            // Also add /I so #include "wincompat.h" directives in picotls
+            // can find the file via normal include path search.
             cmake_args.push(format!(
-                "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /W3 /FI\"{}\"",
-                wincompat_path.display()
+                "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /W3 /FI\"{}\" /I\"{}\"",
+                wincompat_path.display(),
+                compat_dir.display()
             ));
         }
 
