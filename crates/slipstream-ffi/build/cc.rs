@@ -26,9 +26,11 @@ pub(crate) fn compile_cc_lib(name: &str, sources: &[PathBuf], include_dirs: &[&P
             let build_dir = std::env::var_os("PICOQUIC_BUILD_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| root.join(".picoquic-build"));
-            let wincompat = build_dir.join("wincompat_include").join("wincompat.h");
+            let wincompat_dir = build_dir.join("wincompat_include");
+            let wincompat = wincompat_dir.join("wincompat.h");
             if wincompat.exists() {
-                build.flag(&format!("/FI{}", wincompat.display()));
+                build.flag(format!("/FI{}", wincompat.display()));
+                build.include(&wincompat_dir);
             }
         }
     }
