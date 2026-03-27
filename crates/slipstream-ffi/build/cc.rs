@@ -35,4 +35,3 @@ pub(crate) fn compile_cc_lib(name: &str, sources: &[PathBuf], include_dirs: &[&P
 
     build.compile(name);
 }
-
