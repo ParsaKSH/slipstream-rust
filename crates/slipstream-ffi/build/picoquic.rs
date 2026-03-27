@@ -337,10 +337,13 @@ pub(crate) fn locate_picotls_include_dir() -> Option<PathBuf> {
 
 pub(crate) fn resolve_picoquic_libs(dir: &Path) -> Option<PicoquicLibs> {
     if let Some(libs) = resolve_picoquic_libs_single_dir(dir) {
-        return Some(PicoquicLibs {
-            search_dirs: vec![dir.to_path_buf()],
-            libs,
-        });
+        let mut search_dirs = vec![dir.to_path_buf()];
+        // MSVC puts libs in Release/ subdirectory
+        let release = dir.join("Release");
+        if release.is_dir() {
+            search_dirs.push(release);
+        }
+        return Some(PicoquicLibs { search_dirs, libs });
     }
 
     let mut picotls_dirs = vec![dir.join("_deps").join("picotls-build")];
@@ -350,8 +353,17 @@ pub(crate) fn resolve_picoquic_libs(dir: &Path) -> Option<PicoquicLibs> {
     for picotls_dir in picotls_dirs {
         if let Some(libs) = resolve_picoquic_libs_split(dir, &picotls_dir) {
             let mut search_dirs = vec![dir.to_path_buf()];
-            if picotls_dir != dir && !search_dirs.contains(&picotls_dir) {
-                search_dirs.push(picotls_dir);
+            // MSVC Release subdirectories for picoquic and picotls
+            let release = dir.join("Release");
+            if release.is_dir() {
+                search_dirs.push(release);
+            }
+            if picotls_dir != *dir && !search_dirs.contains(&picotls_dir) {
+                search_dirs.push(picotls_dir.clone());
+            }
+            let ptls_release = picotls_dir.join("Release");
+            if ptls_release.is_dir() && !search_dirs.contains(&ptls_release) {
+                search_dirs.push(ptls_release);
             }
             return Some(PicoquicLibs { search_dirs, libs });
         }
@@ -359,10 +371,16 @@ pub(crate) fn resolve_picoquic_libs(dir: &Path) -> Option<PicoquicLibs> {
 
     if let Some(parent) = dir.parent() {
         if let Some(libs) = resolve_picoquic_libs_split(parent, dir) {
-            return Some(PicoquicLibs {
-                search_dirs: vec![parent.to_path_buf(), dir.to_path_buf()],
-                libs,
-            });
+            let mut search_dirs = vec![parent.to_path_buf(), dir.to_path_buf()];
+            let release = parent.join("Release");
+            if release.is_dir() {
+                search_dirs.push(release);
+            }
+            let dir_release = dir.join("Release");
+            if dir_release.is_dir() {
+                search_dirs.push(dir_release);
+            }
+            return Some(PicoquicLibs { search_dirs, libs });
         }
         if let Some(grandparent) = parent.parent() {
             if let Some(libs) = resolve_picoquic_libs_split(grandparent, dir) {

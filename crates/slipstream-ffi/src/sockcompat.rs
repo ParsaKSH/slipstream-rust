@@ -15,6 +15,7 @@ pub use libc::{
 pub use self::win::*;
 
 #[cfg(windows)]
+#[allow(non_camel_case_types)]
 mod win {
     use libc::c_int;
 
