@@ -139,20 +139,20 @@ jobs:
             artifact_name: slipstream-darwin-arm64
             ext: ""
             cargo_features: ""
-          - name: windows-amd64
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: slipstream-windows-amd64
-            ext: ".exe"
-            vcpkg_triplet: x64-windows-static-md
-            cargo_features: ""
-          - name: windows-arm64
-            runner: windows-latest
-            target: aarch64-pc-windows-msvc
-            artifact_name: slipstream-windows-arm64
-            ext: ".exe"
-            vcpkg_triplet: arm64-windows-static-md
-            cargo_features: ""
+#          - name: windows-amd64
+#            runner: windows-latest
+#            target: x86_64-pc-windows-msvc
+#            artifact_name: slipstream-windows-amd64
+#            ext: ".exe"
+#            vcpkg_triplet: x64-windows-static-md
+#            cargo_features: ""
+#          - name: windows-arm64
+#            runner: windows-latest
+#            target: aarch64-pc-windows-msvc
+#            artifact_name: slipstream-windows-arm64
+#            ext: ".exe"
+#            vcpkg_triplet: arm64-windows-static-md
+#            cargo_features: ""
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
@@ -174,19 +174,19 @@ jobs:
           echo "OPENSSL_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
 
-      - name: Install build dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          choco install pkgconfiglite -y
-          vcpkg install openssl:${{ matrix.vcpkg_triplet }}
-          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\${{ matrix.vcpkg_triplet }}"
-          echo "OPENSSL_DIR=$root" >> $env:GITHUB_ENV
-          echo "OPENSSL_ROOT_DIR=$root" >> $env:GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=$root\include" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=$root\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_USE_STATIC_LIBS=TRUE" >> $env:GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$root\lib\pkgconfig" >> $env:GITHUB_ENV
+#      - name: Install build dependencies (Windows)
+#        if: runner.os == 'Windows'
+#        shell: powershell
+#        run: |
+#          choco install pkgconfiglite -y
+#          vcpkg install openssl:${{ matrix.vcpkg_triplet }}
+#          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\${{ matrix.vcpkg_triplet }}"
+#          echo "OPENSSL_DIR=$root" >> $env:GITHUB_ENV
+#          echo "OPENSSL_ROOT_DIR=$root" >> $env:GITHUB_ENV
+#          echo "OPENSSL_INCLUDE_DIR=$root\include" >> $env:GITHUB_ENV
+#          echo "OPENSSL_LIB_DIR=$root\lib" >> $env:GITHUB_ENV
+#          echo "OPENSSL_USE_STATIC_LIBS=TRUE" >> $env:GITHUB_ENV
+#          echo "PKG_CONFIG_PATH=$root\lib\pkgconfig" >> $env:GITHUB_ENV
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
