@@ -192,9 +192,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for dir in openssl_search_dirs {
             println!("cargo:rustc-link-search=native={}", dir.display());
         }
-        if cfg!(feature = "openssl-static") {
-            println!("cargo:rustc-link-lib=static=ssl");
-            println!("cargo:rustc-link-lib=static=crypto");
+        if cfg!(feature = "openssl-static") || target.contains("windows") {
+            // On Windows (vcpkg), OpenSSL ships as libssl.lib / libcrypto.lib (static).
+            // Use the "lib" prefix so the linker resolves them correctly.
+            if target.contains("windows") {
+                println!("cargo:rustc-link-lib=static=libssl");
+                println!("cargo:rustc-link-lib=static=libcrypto");
+                // OpenSSL static on Windows requires these system libs
+                println!("cargo:rustc-link-lib=dylib=crypt32");
+                println!("cargo:rustc-link-lib=dylib=gdi32");
+                println!("cargo:rustc-link-lib=dylib=user32");
+            } else {
+                println!("cargo:rustc-link-lib=static=ssl");
+                println!("cargo:rustc-link-lib=static=crypto");
+            }
         } else {
             println!("cargo:rustc-link-lib=dylib=ssl");
             println!("cargo:rustc-link-lib=dylib=crypto");
